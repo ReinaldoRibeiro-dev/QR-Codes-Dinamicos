@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="pt-BR"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>QR Dinâmico · Admin</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--tx:#14171f;--mu:#667085;--bd:#e2e5ea;--ac:#4f46e5;--ac2:#fff;--dg:#d92d20}
+@media(prefers-color-scheme:dark){:root{--bg:#101216;--card:#1a1d24;--tx:#eceef2;--mu:#9aa3b2;--bd:#2c313b;--ac:#818cf8;--ac2:#10121a;--dg:#f97066}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:920px;margin:0 auto;padding:20px 16px 40px}h1{font-size:22px;margin:0 0 4px}h2{font-size:16px;margin:0 0 12px}
+.sub,.mu{color:var(--mu)}.mu{font-size:13px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}@media(max-width:720px){.grid{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:16px;margin-bottom:16px}
+label{display:block;font-size:13px;color:var(--mu);margin:10px 0 4px}
+input{width:100%;padding:10px 12px;border:1px solid var(--bd);border-radius:10px;background:var(--bg);color:var(--tx);font:inherit}
+button{font:inherit;padding:9px 14px;border-radius:10px;border:1px solid var(--bd);background:var(--card);color:var(--tx);cursor:pointer}
+button.p{background:var(--ac);color:var(--ac2);border-color:var(--ac);font-weight:600}button.d{color:var(--dg)}button:disabled{opacity:.5}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.item{padding:10px 12px;border:1px solid var(--bd);border-radius:10px;margin-bottom:8px;cursor:pointer}.item.on{border-color:var(--ac);box-shadow:0 0 0 1px var(--ac)}
+.item b{display:block}.item span{color:var(--mu);font-size:13px;word-break:break-all}
+.qr{background:#fff;border-radius:12px;padding:8px;max-width:260px;margin:0 auto}.qr svg{display:block;width:100%;height:auto}
+.link{word-break:break-all;font-size:13px;background:var(--bg);border:1px solid var(--bd);border-radius:8px;padding:8px;margin-top:10px}
+#st{font-size:14px;margin:8px 0;min-height:21px}
+</style></head>
+<body><main>
+<h1>QR Dinâmico</h1>
+<p class="sub">Os QR codes apontam para este site; o destino fica em <code>codes.json</code> no seu repositório.</p>
+<div class="card" id="cfg"><h2>Conexão com o GitHub</h2>
+  <div class="grid"><div><label>Usuário/organização</label><input id="o"></div><div><label>Repositório</label><input id="r"></div></div>
+  <div class="grid"><div><label>Branch</label><input id="br" value="main"></div>
+  <div><label>Token (fine-grained, só este repo, Contents: read/write)</label><input id="t" type="password" autocomplete="off"></div></div>
+  <p class="mu">O token fica salvo apenas neste navegador.</p>
+  <div class="row"><button class="p" id="conn">Conectar</button><button id="out">Esquecer token</button></div>
+</div>
+<div id="st"></div>
+<div class="grid" id="ui" hidden><div>
+  <div class="card"><h2>Novo QR code</h2>
+    <label>Nome</label><input id="n" maxlength="60" placeholder="Ex.: Cardápio">
+    <label>URL de destino</label><input id="u" placeholder="https://..." inputmode="url">
+    <div class="row"><button class="p" id="add">Criar</button></div></div>
+  <div class="card"><h2>Seus códigos</h2><div id="list"></div></div>
+</div><div><div class="card" id="det"></div></div></div>
+</main>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
+<script>
+const $=i=>document.getElementById(i);
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const ok=u=>/^https?:\/\//i.test(u);
+const b64e=s=>btoa(unescape(encodeURIComponent(s))),b64d=s=>decodeURIComponent(escape(atob(s.replace(/\n/g,''))));
+const BASE=location.origin+location.pathname.replace(/[^/]*$/,'');
+const link=c=>BASE+'?c='+c.id;
+let codes=[],sha=null,sel=null,cfg=JSON.parse(localStorage.getItem('qrcfg')||'{}');
+// pré-preenche a partir de usuario.github.io/repo/
+const host=location.hostname.match(/^(.+)\.github\.io$/),seg=location.pathname.split('/')[1];
+$('o').value=cfg.o||(host?host[1]:'');$('r').value=cfg.r||(host?(seg&&!seg.endsWith('.html')?seg:host[1]+'.github.io'):'');
+$('br').value=cfg.br||'main';$('t').value=cfg.t||'';
+function st(t,err){$('st').textContent=t;$('st').style.color=err?'var(--dg)':'var(--mu)'}
+const api=()=>`https://api.github.com/repos/${cfg.o}/${cfg.r}/contents/codes.json`;
+const hdr=()=>({Authorization:'Bearer '+cfg.t,Accept:'application/vnd.github+json'});
+async function load(){
+  st('Carregando…');
+  const r=await fetch(api()+'?ref='+encodeURIComponent(cfg.br)+'&t='+Date.now(),{headers:hdr(),cache:'no-store'});
+  if(!r.ok)throw new Error(r.status==401?'Token inválido':r.status==404?'Repositório/arquivo não encontrado (ou token sem acesso)':'Erro '+r.status);
+  const j=await r.json();sha=j.sha;codes=JSON.parse(b64d(j.content)).codes||[];
+}
+async function save(msg){
+  st('Salvando…');
+  const body={message:msg,branch:cfg.br,sha,content:b64e(JSON.stringify({codes},null,2)+'\n')};
+  const r=await fetch(api(),{method:'PUT',headers:{...hdr(),'Content-Type':'application/json'},body:JSON.stringify(body)});
+  if(r.status==409||r.status==422){await load();render();throw new Error('Conflito: recarregamos os dados, repita a ação');}
+  if(!r.ok)throw new Error('Falha ao salvar ('+r.status+'). O token tem permissão de escrita?');
+  sha=(await r.json()).content.sha;st('Salvo. O site publica a mudança em instantes.');
+}
+async function run(f){try{await f()}catch(e){st(e.message,true)}}
+$('conn').onclick=()=>run(async()=>{
+  cfg={o:$('o').value.trim(),r:$('r').value.trim(),br:$('br').value.trim()||'main',t:$('t').value.trim()};
+  if(!cfg.o||!cfg.r||!cfg.t)throw new Error('Preencha usuário, repositório e token');
+  await load();localStorage.setItem('qrcfg',JSON.stringify(cfg));
+  $('cfg').hidden=true;$('ui').hidden=false;st('');render();
+});
+$('out').onclick=()=>{localStorage.removeItem('qrcfg');location.reload()};
+function mtx(t){const q=qrcode(0,'M');q.addData(t);q.make();return{n:q.getModuleCount(),d:(r,c)=>q.isDark(r,c)}}
+function svgOf(t){const{n,d}=mtx(t),m=2,s=n+2*m;let p='';
+  for(let r=0;r<n;r++)for(let c=0;c<n;c++)if(d(r,c))p+=`M${c+m} ${r+m}h1v1h-1z`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${s} ${s}" shape-rendering="crispEdges"><rect width="${s}" height="${s}" fill="#fff"/><path d="${p}" fill="#000"/></svg>`}
+function pngOf(t,cb){const{n,d}=mtx(t),m=2,k=12,s=(n+2*m)*k,cv=document.createElement('canvas');cv.width=cv.height=s;
+  const x=cv.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,s,s);x.fillStyle='#000';
+  for(let r=0;r<n;r++)for(let c=0;c<n;c++)if(d(r,c))x.fillRect((c+m)*k,(r+m)*k,k,k);cv.toBlob(cb,'image/png')}
+function dl(name,blob){const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)}
+function render(){
+  $('list').innerHTML=codes.map(c=>`<div class="item ${c.id===sel?'on':''}" data-id="${c.id}"><b>${esc(c.name)}</b><span>${esc(c.url)}</span></div>`).join('')||'<p class="mu">Nenhum QR code ainda.</p>';
+  document.querySelectorAll('.item').forEach(e=>e.onclick=()=>{sel=e.dataset.id;render()});
+  const c=codes.find(x=>x.id===sel),D=$('det');
+  if(!c){D.innerHTML='<h2>Pré-visualização</h2><p class="mu">Selecione ou crie um QR code.</p>';return}
+  D.innerHTML=`<h2>${esc(c.name)}</h2><div class="qr">${svgOf(link(c))}</div><div class="link">${esc(link(c))}</div>
+  <div class="row"><button id="cp">Copiar link</button><button id="dp">PNG</button><button id="ds">SVG</button></div>
+  <label>Destino atual</label><input id="eu" value="${esc(c.url)}"><label>Nome</label><input id="en" value="${esc(c.name)}" maxlength="60">
+  <div class="row"><button class="p" id="sv">Salvar alterações</button><button class="d" id="rm">Excluir</button></div>`;
+  const slug=c.name.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'')||c.id;
+  $('cp').onclick=()=>navigator.clipboard.writeText(link(c)).then(()=>st('Link copiado'));
+  $('dp').onclick=()=>pngOf(link(c),b=>dl('qr-'+slug+'.png',b));
+  $('ds').onclick=()=>dl('qr-'+slug+'.svg',new Blob([svgOf(link(c))],{type:'image/svg+xml'}));
+  $('sv').onclick=()=>run(async()=>{const u=$('eu').value.trim(),n=$('en').value.trim();
+    if(!n||!ok(u))throw new Error('Nome e URL http(s) válidos, por favor');c.url=u;c.name=n;await save('Atualiza '+n);render()});
+  $('rm').onclick=()=>run(async()=>{if(!confirm('Excluir? QR codes já impressos deixarão de funcionar.'))return;
+    codes=codes.filter(x=>x.id!==c.id);sel=null;await save('Remove '+c.name);render()});
+}
+$('add').onclick=()=>run(async()=>{const n=$('n').value.trim(),u=$('u').value.trim();
+  if(!n||!ok(u))throw new Error('Informe um nome e uma URL http(s) válida');
+  const c={id:Math.random().toString(36).slice(2,8),name:n,url:u};codes.unshift(c);sel=c.id;
+  await save('Adiciona '+n);$('n').value=$('u').value='';render()});
+if(cfg.t)$('conn').click();
+</script></body></html>
