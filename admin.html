@@ -11,6 +11,7 @@ main{max-width:920px;margin:0 auto;padding:20px 16px 40px}h1{font-size:22px;marg
 .card{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:16px;margin-bottom:16px}
 label{display:block;font-size:13px;color:var(--mu);margin:10px 0 4px}
 input{width:100%;padding:10px 12px;border:1px solid var(--bd);border-radius:10px;background:var(--bg);color:var(--tx);font:inherit}
+input[type=search]{margin-bottom:10px}
 button{font:inherit;padding:9px 14px;border-radius:10px;border:1px solid var(--bd);background:var(--card);color:var(--tx);cursor:pointer}
 button.p{background:var(--ac);color:var(--ac2);border-color:var(--ac);font-weight:600}button.d{color:var(--dg)}button:disabled{opacity:.5}
 .row{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
@@ -19,6 +20,7 @@ button.p{background:var(--ac);color:var(--ac2);border-color:var(--ac);font-weigh
 .qr{background:#fff;border-radius:12px;padding:8px;max-width:260px;margin:0 auto}.qr svg{display:block;width:100%;height:auto}
 .link{word-break:break-all;font-size:13px;background:var(--bg);border:1px solid var(--bd);border-radius:8px;padding:8px;margin-top:10px}
 #st{font-size:14px;margin:8px 0;min-height:21px}
+#cnt{margin:0 0 10px}
 </style></head>
 <body><main>
 <h1>QR Dinâmico</h1>
@@ -36,7 +38,10 @@ button.p{background:var(--ac);color:var(--ac2);border-color:var(--ac);font-weigh
     <label>Nome</label><input id="n" maxlength="60" placeholder="Ex.: Cardápio">
     <label>URL de destino</label><input id="u" placeholder="https://..." inputmode="url">
     <div class="row"><button class="p" id="add">Criar</button></div></div>
-  <div class="card"><h2>Seus códigos</h2><div id="list"></div></div>
+  <div class="card"><h2>Seus códigos</h2>
+    <input id="q" type="search" placeholder="Buscar por nome, link ou código…" aria-label="Buscar QR codes">
+    <p class="mu" id="cnt" hidden></p>
+    <div id="list"></div></div>
 </div><div><div class="card" id="det"></div></div></div>
 </main>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
@@ -47,6 +52,7 @@ const ok=u=>/^https?:\/\//i.test(u);
 const b64e=s=>btoa(unescape(encodeURIComponent(s))),b64d=s=>decodeURIComponent(escape(atob(s.replace(/\n/g,''))));
 const BASE=location.origin+location.pathname.replace(/[^/]*$/,'');
 const link=c=>BASE+'?c='+c.id;
+const norm=s=>String(s).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
 let codes=[],sha=null,sel=null,cfg=JSON.parse(localStorage.getItem('qrcfg')||'{}');
 // pré-preenche a partir de usuario.github.io/repo/
 const host=location.hostname.match(/^(.+)\.github\.io$/),seg=location.pathname.split('/')[1];
@@ -91,8 +97,12 @@ function pngOf(t,cb){const{n,d}=mtx(t),m=2,k=12,s=(n+2*m)*k,cv=document.createEl
   for(let r=0;r<n;r++)for(let c=0;c<n;c++)if(d(r,c))x.fillRect((c+m)*k,(r+m)*k,k,k);cv.toBlob(cb,'image/png')}
 function dl(name,blob){const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)}
 function render(){
-  $('list').innerHTML=codes.map(c=>`<div class="item ${c.id===sel?'on':''}" data-id="${c.id}"><b>${esc(c.name)}</b><span>${esc(c.url)}</span></div>`).join('')||'<p class="mu">Nenhum QR code ainda.</p>';
-  document.querySelectorAll('.item').forEach(e=>e.onclick=()=>{sel=e.dataset.id;render()});
+  const term=norm($('q').value.trim());
+  const shown=codes.filter(c=>!term||norm(c.name+' '+c.url+' '+c.id).includes(term));
+  $('cnt').hidden=!term;
+  $('cnt').textContent=term?shown.length+' de '+codes.length+' código(s)':'';
+  $('list').innerHTML=shown.map(c=>`<div class="item ${c.id===sel?'on':''}" data-id="${esc(c.id)}"><b>${esc(c.name)}</b><span>${esc(c.url)}</span></div>`).join('')||(codes.length?'<p class="mu">Nenhum QR code encontrado.</p>':'<p class="mu">Nenhum QR code ainda.</p>');
+  document.querySelectorAll('#list .item').forEach(e=>e.onclick=()=>{sel=e.dataset.id;render()});
   const c=codes.find(x=>x.id===sel),D=$('det');
   if(!c){D.innerHTML='<h2>Pré-visualização</h2><p class="mu">Selecione ou crie um QR code.</p>';return}
   D.innerHTML=`<h2>${esc(c.name)}</h2><div class="qr">${svgOf(link(c))}</div><div class="link">${esc(link(c))}</div>
@@ -112,9 +122,10 @@ function render(){
   $('rm').onclick=()=>run(async()=>{if(!confirm('Excluir? QR codes já impressos deixarão de funcionar.'))return;
     codes=codes.filter(x=>x.id!==c.id);sel=null;await save('Remove '+c.name);render()});
 }
+$('q').oninput=render;
 $('add').onclick=()=>run(async()=>{const n=$('n').value.trim(),u=$('u').value.trim();
   if(!n||!ok(u))throw new Error('Informe um nome e uma URL http(s) válida');
   const c={id:Math.random().toString(36).slice(2,8),name:n,url:u};codes.unshift(c);sel=c.id;
-  await save('Adiciona '+n);$('n').value=$('u').value='';render()});
+  await save('Adiciona '+n);$('n').value=$('u').value='';$('q').value='';render()});
 if(cfg.t)$('conn').click();
 </script></body></html>
